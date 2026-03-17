@@ -274,34 +274,49 @@ function getZone(sc) { return getLM(Math.max(0,sc)).zone; }
 function getPal(sc)  { return PAL[getZone(sc)] || PAL.midwest; }
 
 // ═══════════════════════════════════════════════════════════════
-//  DIFFICULTY  — zone-based
+//  DIFFICULTY  — purely score-driven, steps up every 30 points
+//
+//  d = 0.0  at score 0    (gentle start)
+//  d = 0.17 at score 30   (slightly faster, more vehicles)
+//  d = 0.33 at score 60
+//  d = 0.50 at score 90
+//  d = 0.67 at score 120
+//  d = 0.83 at score 150
+//  d = 1.00 at score 180+ (maximum)
+//
+//  Zone cfg only controls the MIX of row types (what appears),
+//  not speed or counts — those are driven purely by globalDiff.
 // ═══════════════════════════════════════════════════════════════
-const ZONE_CFG = {
-  la:        { base:0.00, ramp:0.010, types:[[5,'safe'],[3,'road'],[1,'freeway']] },
-  coast:     { base:0.15, ramp:0.012, types:[[3,'safe'],[4,'river'],[3,'road']] },
-  sf:        { base:0.30, ramp:0.014, types:[[2,'safe'],[3,'road'],[2,'river'],[1,'train']] },
-  napa:      { base:0.42, ramp:0.014, types:[[2,'safe'],[4,'road'],[3,'river']] },
-  shasta:    { base:0.55, ramp:0.016, types:[[2,'safe'],[2,'freeway'],[2,'train'],[3,'road']] },
-  crater:    { base:0.70, ramp:0.016, types:[[2,'safe'],[4,'river'],[3,'road']] },
-  umpqua:    { base:0.82, ramp:0.012, types:[[2,'safe'],[4,'river'],[3,'road']] },
-  finish:    { base:0.90, ramp:0.010, types:[[2,'safe'],[3,'river'],[4,'road'],[1,'freeway']] },
-  midwest:   { base:0.12, ramp:0.011, types:[[4,'safe'],[4,'road'],[1,'freeway']] },
-  greatlakes:{ base:0.22, ramp:0.013, types:[[3,'safe'],[4,'river'],[3,'road']] },
-  plains:    { base:0.35, ramp:0.013, types:[[3,'safe'],[3,'road'],[2,'river'],[1,'freeway']] },
-  appalachia:{ base:0.48, ramp:0.015, types:[[2,'safe'],[3,'road'],[3,'river'],[1,'train']] },
-  rockies:   { base:0.60, ramp:0.016, types:[[2,'safe'],[2,'freeway'],[2,'train'],[3,'road']] },
-  dcbalt:    { base:0.72, ramp:0.015, types:[[2,'safe'],[4,'road'],[2,'freeway'],[1,'train']] },
-  northeast: { base:0.80, ramp:0.012, types:[[2,'safe'],[4,'river'],[3,'road']] },
-};
 
-function zoneDiff(zone, score) {
-  const cfg = ZONE_CFG[zone] || ZONE_CFG.la;
-  const zoneStart = (LANDMARKS.find(l=>l.zone===zone)||LANDMARKS[0]).at;
-  return Math.min(1, cfg.base + cfg.ramp * Math.max(0, score - zoneStart));
+const DIFF_STEP = 30;   // points between each difficulty tier
+const DIFF_TIERS = 6;   // number of tiers before hitting max
+
+function globalDiff(score) {
+  return Math.min(1, Math.floor(score / DIFF_STEP) / DIFF_TIERS);
 }
 
+// Row-type mix per zone — weights only, no difficulty numbers here
+const ZONE_CFG = {
+  la:        { types:[[5,'safe'],[3,'road'],[1,'freeway']] },
+  desert:    { types:[[3,'safe'],[5,'road'],[2,'freeway']] },
+  coast:     { types:[[3,'safe'],[4,'river'],[3,'road']] },
+  sf:        { types:[[2,'safe'],[3,'road'],[2,'river'],[1,'train']] },
+  napa:      { types:[[2,'safe'],[4,'road'],[3,'river']] },
+  shasta:    { types:[[2,'safe'],[2,'freeway'],[2,'train'],[3,'road']] },
+  crater:    { types:[[2,'safe'],[4,'river'],[3,'road']] },
+  umpqua:    { types:[[2,'safe'],[4,'river'],[3,'road']] },
+  finish:    { types:[[2,'safe'],[3,'river'],[4,'road'],[1,'freeway']] },
+  midwest:   { types:[[4,'safe'],[4,'road'],[1,'freeway']] },
+  greatlakes:{ types:[[3,'safe'],[4,'river'],[3,'road']] },
+  plains:    { types:[[3,'safe'],[3,'road'],[2,'river'],[1,'freeway']] },
+  appalachia:{ types:[[2,'safe'],[3,'road'],[3,'river'],[1,'train']] },
+  rockies:   { types:[[2,'safe'],[2,'freeway'],[2,'train'],[3,'road']] },
+  dcbalt:    { types:[[2,'safe'],[4,'road'],[2,'freeway'],[1,'train']] },
+  northeast: { types:[[2,'safe'],[4,'river'],[3,'road']] },
+};
+
 function pickType(zone, score) {
-  const cfg = ZONE_CFG[zone] || ZONE_CFG.la;
+  const cfg = ZONE_CFG[zone] || ZONE_CFG.midwest;
   const total = cfg.types.reduce((s,[w])=>s+w, 0);
   let r = Math.random() * total;
   for (const [w, t] of cfg.types) { r -= w; if (r <= 0) return t; }
@@ -324,8 +339,8 @@ function pickType(zone, score) {
 
 function makeRow(ri, score) {
   const zone = getZone(Math.max(0, ri));
-  const pal  = PAL[zone] || PAL.la;
-  const d    = zoneDiff(zone, score);       // 0..1 for this zone at this score
+  const pal  = PAL[zone] || PAL.midwest;
+  const d    = globalDiff(score);   // 0..1 stepping every 30 points, same for all zones
 
   // Force safe for very first rows
   let type = (ri <= 1) ? 'safe' : pickType(zone, score);
@@ -362,12 +377,29 @@ function makeRow(ri, score) {
 
     // Many wide logs early, fewer narrower ones later
     const count = Math.max(2, Math.round(3.5 - d*1.5));
-    const logW  = Math.round(110 - d*30 + Math.random()*20);   // wide early, narrower later
+    const logW  = Math.round(110 - d*30 + Math.random()*20);
     const slotW = W / count;
     for (let i = 0; i < count; i++) {
       const maxOff = Math.max(0, slotW - logW - 8);
       const x = i*slotW + (maxOff>0 ? Math.random()*maxOff : 0) + logW/2;
       row.entities.push({ x, w:logW });
+    }
+
+    // Flying fish — appear at d >= 0.33 (score 60+)
+    row.fish = [];
+    if (d >= 0.33) {
+      const fishCount = Math.floor(1 + (d - 0.33) * 4.5); // 1 at d=0.33, up to 3 at d=1
+      for (let i = 0; i < fishCount; i++) {
+        row.fish.push({
+          x:        Math.random() * W,          // where fish leaps from
+          t:        -1,                          // -1 = waiting (not in flight)
+          cooldown: 2.5 + Math.random() * (4 - d*2), // seconds between leaps
+          timer:    1 + Math.random() * 3,       // initial delay
+          dir:      Math.random() < 0.5 ? 1 : -1,
+          arcH:     TILE * (1.2 + Math.random() * 0.8), // how high above row center
+          travelX:  TILE * (1.5 + Math.random()),        // horizontal distance
+        });
+      }
     }
   }
 
@@ -627,10 +659,67 @@ function qMove(dr, dc) {
   if (!gameActive || player.dead) return;
   if (queue.length < 2) queue.push({dr, dc});
 }
+// ─── Keyboard navigation state ────────────────────────────────
+// 'team' = team picker, 'dest' = destination picker, 'game' = playing
+let navScreen = 'team';
+let navIdx = 0;  // which card is focused
+
+function getNavCards() {
+  if (navScreen === 'dest') {
+    const picker = document.getElementById('dest-picker');
+    return picker ? Array.from(picker.querySelectorAll('[data-nav]')) : [];
+  }
+  return Array.from(document.getElementById('team-cards').querySelectorAll('[data-nav]'));
+}
+
+function navFocus(idx) {
+  const cards = getNavCards();
+  if (!cards.length) return;
+  navIdx = ((idx % cards.length) + cards.length) % cards.length;
+  cards.forEach((c, i) => {
+    if (i === navIdx) {
+      c.style.outline = '3px solid #FFD700';
+      c.style.outlineOffset = '2px';
+      c.scrollIntoView({ block:'nearest', behavior:'smooth' });
+    } else {
+      c.style.outline = '';
+      c.style.outlineOffset = '';
+    }
+  });
+}
+
+function navActivate() {
+  const cards = getNavCards();
+  if (cards[navIdx]) cards[navIdx].click();
+}
+
 document.addEventListener('keydown', e => {
+  // ── Game over screen ─────────────────────────────────────────
   if ((e.key === 'Enter' || e.key === ' ') && document.getElementById('go').style.display === 'flex') {
     e.preventDefault(); resetGame(); return;
   }
+
+  // ── Selection screens ────────────────────────────────────────
+  if (navScreen === 'team' || navScreen === 'dest') {
+    const cards = getNavCards();
+    if (!cards.length) return;
+    // Determine grid column count from actual layout
+    const cols = Math.max(1, Math.round(cards[0].parentElement.offsetWidth / (cards[0].offsetWidth + 12)));
+    if (e.key === 'ArrowRight') { e.preventDefault(); navFocus(navIdx + 1); return; }
+    if (e.key === 'ArrowLeft')  { e.preventDefault(); navFocus(navIdx - 1); return; }
+    if (e.key === 'ArrowDown')  { e.preventDefault(); navFocus(navIdx + cols); return; }
+    if (e.key === 'ArrowUp')    { e.preventDefault(); navFocus(navIdx - cols); return; }
+    if (e.key === 'Enter' || e.key === ' ') { e.preventDefault(); navActivate(); return; }
+    if (e.key === 'Escape' && navScreen === 'dest') {
+      e.preventDefault();
+      const dp = document.getElementById('dest-picker'); if (dp) dp.remove();
+      navScreen = 'team'; navIdx = 0; navFocus(0);
+      return;
+    }
+    return; // don't pass other keys to game during selection
+  }
+
+  // ── Gameplay ─────────────────────────────────────────────────
   const m = {ArrowUp:[-1,0],w:[-1,0],W:[-1,0],
              ArrowDown:[1,0],s:[1,0],S:[1,0],
              ArrowLeft:[0,-1],a:[0,-1],A:[0,-1],
@@ -711,6 +800,8 @@ function showDestPicker(teamKey) {
     card.innerHTML = `<div style="font-size:2.2rem">${destCity.emoji}</div><div style="font-family:Fredoka One,cursive;font-size:1rem;color:#fff;text-align:center">${destCity.label.split(',')[0]}</div><div style="font-size:.65rem;color:#aaa;text-align:center">${destCity.label.split(',')[1]||''}</div>`;
     card.addEventListener('mouseenter',()=>{ card.style.background='rgba(255,255,255,.15)'; card.style.transform='translateY(-3px) scale(1.04)'; card.style.boxShadow='0 12px 28px rgba(0,0,0,.4)'; });
     card.addEventListener('mouseleave',()=>{ card.style.background='rgba(255,255,255,.07)'; card.style.transform=''; card.style.boxShadow=''; });
+    card.dataset.nav = destKey;
+    card.addEventListener('mouseenter', () => { const i=getNavCards().indexOf(card); if(i>=0){navIdx=i;navFocus(i);} });
     card.addEventListener('click', () => startGame(teamKey, destKey));
     grid.appendChild(card);
   }
@@ -719,10 +810,13 @@ function showDestPicker(teamKey) {
   const back = document.createElement('button');
   back.textContent = '← Back';
   back.style.cssText = 'font-family:Fredoka One,cursive;font-size:1rem;padding:10px 28px;background:rgba(255,255,255,.12);color:#fff;border:2px solid rgba(255,255,255,.25);border-radius:30px;cursor:pointer;flex-shrink:0;margin-top:4px;';
-  back.addEventListener('click', () => picker.remove());
+  back.addEventListener('click', () => { picker.remove(); navScreen='team'; navIdx=0; navFocus(0); });
   picker.appendChild(back);
 
   document.body.appendChild(picker);
+  navScreen = 'dest';
+  navIdx = 0;
+  setTimeout(() => navFocus(0), 50);
 }
 
 function startGame(teamKey, destKey) {
@@ -739,6 +833,7 @@ function startGame(teamKey, destKey) {
   lastTime = performance.now();
   raf = requestAnimationFrame(loop);
   playMusic(LANDMARKS[0].zone);
+  navScreen = 'game';
 }
 
 function initGame() {
@@ -757,6 +852,7 @@ function resetGame() {
   document.getElementById('go').style.display='none';
   const dp=document.getElementById('dest-picker'); if(dp) dp.remove();
   document.getElementById('char-sel').style.display='flex';
+  navScreen='team'; navIdx=0; setTimeout(()=>navFocus(0),50);
   if (sessionBest > 0) {
     document.getElementById('hs-banner').style.display='block';
     document.getElementById('hs-val').textContent=sessionBest;
@@ -917,6 +1013,24 @@ function checkCollision() {
     }
     player.onLog=onLog;
     if (!onLog) killPlayer();
+
+    // Flying fish collision — kill on contact while airborne (mid-arc only, not at splash)
+    if (!player.dead && row.fish) {
+      const playerScreenY = rowToScreenY(playerRow);
+      for (const f of row.fish) {
+        if (f.t < 0) continue;
+        const arc = Math.sin(f.t * Math.PI);
+        if (arc < 0.15) continue; // not yet clear of water — no hazard at surface
+        const fx = ((f.x + f.dir * f.travelX * f.t) % W + W) % W;
+        const fy = playerScreenY - arc * f.arcH;
+        // Check all wrapped positions
+        for (const ox of [0, -W, W]) {
+          if (Math.abs(pxPx - (fx+ox)) < 22 && Math.abs(playerScreenY - fy) < 22) {
+            killPlayer(); return;
+          }
+        }
+      }
+    }
     return;
   }
   player.onLog=null;
@@ -1056,6 +1170,36 @@ function drawRow(row, screenRow) {
       ctx.beginPath(); ctx.arc(ox, y+HALF, 13, 0, Math.PI); ctx.stroke();
     }
     for (const e of row.entities) drawLog(e, y);
+
+    // Draw flying fish as arcing emoji
+    if (row.fish) {
+      ctx.font = '22px serif';
+      ctx.textAlign = 'center';
+      ctx.textBaseline = 'middle';
+      for (const f of row.fish) {
+        if (f.t < 0) continue;
+        const arc = Math.sin(f.t * Math.PI);         // 0 at start/end, 1 at peak
+        const fx  = ((f.x + f.dir * f.travelX * f.t) % W + W) % W;
+        const fy  = y + HALF - arc * f.arcH;          // rises above row center
+        const angle = f.dir * (arc < 0.5 ? -0.6 : 0.6); // flip at apex
+        // Draw at main position + edge ghost if near screen boundary
+        for (const ox of [0, fx < 30 ? W : (fx > W-30 ? -W : null)].filter(v=>v!==null)) {
+          ctx.save();
+          ctx.translate(fx + ox, fy);
+          ctx.rotate(angle);
+          ctx.globalAlpha = 0.92;
+          ctx.fillText('🐟', 0, 0);
+          // Splash rings when near water surface
+          if (arc < 0.12 || arc > 0.88) {
+            ctx.globalAlpha = (1 - arc/0.12) * 0.5 || (arc - 0.88)/0.12 * 0.5;
+            ctx.strokeStyle = 'rgba(255,255,255,0.6)';
+            ctx.lineWidth = 1.5;
+            ctx.beginPath(); ctx.arc(0, 0, 14, 0, Math.PI*2); ctx.stroke();
+          }
+          ctx.restore();
+        }
+      }
+    }
     return;
   }
   if (row.type==='train') {
@@ -1105,9 +1249,8 @@ function loop(ts) {
 
   // ── Auto-scroll ──────────────────────────────────────────────
   if (gameActive && scrollActive && !player.dead) {
-    const zone = getZone(score);
-    const prof = MUSIC_PROFILES[zone] || MUSIC_PROFILES.la;
-    const scrollSpd = SCROLL_BASE * (1 + prof.tension * 3.5);
+    const d = globalDiff(score);
+    const scrollSpd = SCROLL_BASE * (1 + d * 3.5);
     scrollPos += scrollSpd * dt;
 
     const newWorldOff = Math.floor(scrollPos);
@@ -1148,7 +1291,23 @@ function loop(ts) {
       pxPx = Math.max(HALF, Math.min(W-HALF, pxPx));
       tgX  = pxPx;
     }
-  }
+
+    // Animate flying fish
+    if (row.type==='river' && row.fish) {
+      for (const f of row.fish) {
+        if (f.t < 0) {
+          f.timer -= dt / 60;
+          if (f.timer <= 0) f.t = 0;
+        } else {
+          f.t += dt * 0.022 * (1 + globalDiff(score) * 0.8);
+          if (f.t >= 1) {
+            f.t = -1;
+            f.timer = f.cooldown;
+            f.x = ((f.x + f.dir * f.travelX) % W + W) % W;
+          }
+        }
+      }
+    }
 
   // ── Player X animation (ease-in-out) ─────────────────────────
   // Y is NEVER stored — always recomputed fresh from rowToScreenY()
@@ -1222,9 +1381,12 @@ function loop(ts) {
     const city = CITIES[team.city];
     const card = document.createElement('div');
     card.className = 'card';
+    card.dataset.nav = key;
     card.style.borderColor = team.color;
     card.innerHTML = `<div class="ce">${team.emoji}</div><div class="cn">${team.name}</div><div class="cs">${team.school}<br>${city.label}</div>`;
     card.addEventListener('mouseenter', () => {
+      const i = getNavCards().indexOf(card);
+      if (i >= 0) { navIdx = i; navFocus(i); }
       card.style.background = team.color + '22';
       card.style.boxShadow = `0 14px 30px ${team.glow}`;
     });
@@ -1235,6 +1397,10 @@ function loop(ts) {
     card.addEventListener('click', () => selectTeam(key));
     container.appendChild(card);
   }
+  navScreen = 'team';
+  navIdx = 0;
+  // Slight delay so layout is calculated before we try to focus
+  setTimeout(() => navFocus(0), 50);
 })();
 </script>
 </body>
